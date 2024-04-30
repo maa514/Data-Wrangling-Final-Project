@@ -1,0 +1,323 @@
+---
+title: 'Mindful Insights: Exploring the Impact of Meditation through Data Analysis'
+author: "Malik Akinlabi"
+date: "2024-04-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Description
+
+Over the last year and a half, I’ve been incredibly interested in the widespread adoption of meditation in contemporary society. I meditate very often, and it has helped quell internal turmoil and bring peace into my life. My objective is to chart the trajectory of meditation usage over time, tracing its emergence in clinical trials aimed at addressing various underlying health conditions. As someone deeply intrigued by meditation and its profound impact on both physical and mental well-being, I aim to evaluate its potential as a therapeutic intervention. By examining its integration into medical practice, I seek to understand its efficacy and explore its potential role in enhancing healthcare outcomes.
+
+## Procedures
+I scrape my data from a study on the National Library of Medicine website. The study is called "Systematic Review for the Medical Applications of Meditation in Randomized Controlled Trials". I scrape two tables, which are the summary of the randomized controlled trials for physical and mental disorders. I also scraped data from the CDC, called "Prevalence of Mindfulness Practices in the US Workforce: National Health Interview Survey". I scraped a single table: Table 2. Prevalence of 12-Month Engagement in Mindfulness-Based Practices Among Adults (Aged ≥18 y), by Employment Status and Occupation, National Health Interview Survey Alternative Medicine Supplement, 2002, 2007, and 2012.
+
+I cleaned the data to begin working with it.
+
+```{r source 1 clean, include=FALSE}
+#Scraping and cleaning the data from the first source.
+# Load necessary libraries
+library(rvest)
+library(dplyr)
+library(tidyr)
+library(janitor)
+library(ggplot2)
+library(tidytext)
+library(wordcloud)
+library(tm)
+# Define the URL
+url <- "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8834867/"
+
+# Read the HTML content of the webpage
+page <- url %>%
+  read_html()
+
+# Scrape the second table (Summary of the RCTs for participants with physical disorders)
+table_physical <- page %>%
+  html_nodes("table") %>%
+  .[[2]] %>%
+  html_table(fill = TRUE)
+
+# Scrape the third table (Summary of the RCTs for participants with mental disorders)
+table_mental <- page %>%
+  html_nodes("table") %>%
+  .[[3]] %>%
+  html_table(fill = TRUE)
+
+# Clean physical table
+# Change column names to snake_case
+colnames(table_physical) <- c("disorder", "kind_of_meditation_category", "n_of_participants", "period_weeks", "significant_clinical_finding_1", "unsignificant_clinical_finding_2")
+
+# Remove unnecessary rows
+clean_table_physical <- table_physical[-c(1:2), ]
+clean_table_physical <- clean_table_physical %>%
+  filter(!grepl("^Diseases of", disorder) & !grepl("^Others", disorder) & !grepl("disorders", disorder, ignore.case = TRUE))
+
+# Clean disorder column. Removing brackets
+clean_table_physical$disorder <- gsub("\\s*\\[\\d+\\]", "", clean_table_physical$disorder)
+
+# Clean kind_of_meditation_category. Instead of keeping the specific form of meditation included, we'll simply categorize them into the three big types: either Yoga, Mindfulness, or Transcendent
+clean_table_physical$kind_of_meditation_category <- gsub(".*\\((.)\\).*", "\\1", clean_table_physical$kind_of_meditation_category)
+#Cleaning deeper.There are rows that are not one of our big three, named "other", and there are rows where the type is two of the big three. in the cases where there are two i took the first classification. 
+clean_table_physical$kind_of_meditation_category <- gsub(".*\\((.*?)\\).*", "\\1", clean_table_physical$kind_of_meditation_category)
+clean_table_physical$kind_of_meditation_category <- gsub(".*other.*", "other", clean_table_physical$kind_of_meditation_category)
+clean_table_physical$kind_of_meditation_category <- gsub("\\s*\\+.*", "", clean_table_physical$kind_of_meditation_category)
+#Trimming and trailing or remaining space
+clean_table_physical$kind_of_meditation_category <- trimws(clean_table_physical$kind_of_meditation_category)
+
+# Clean n_of_participants column. removing parenthensis
+clean_table_physical$n_of_participants <- gsub("\\s*\\(.*\\)", "", clean_table_physical$n_of_participants)
+#Changing n_of_participants to a numeric data type
+clean_table_physical$n_of_participants <- as.numeric(clean_table_physical$n_of_participants)
+
+# Clean period_weeks column. In some of the entries there was the entry "day" which ruined the column data type. for each entry that was in days I just classified it as 1 week.
+clean_table_physical$period_weeks <- gsub("\\s*day", "", clean_table_physical$period_weeks)
+#Changing period_weeks to numeric
+clean_table_physical$period_weeks <- as.numeric(clean_table_physical$period_weeks)
+
+# Clean mental table
+#Changing column names to snake_case
+colnames(table_mental) <- c("disorder", "kind_of_meditation_category", "n_of_participants", "period_weeks", "significant_clinical_finding_1", "unsignificant_clinical_finding_2")
+
+#Remove unneccessary rows. Rows 1, 2, and 28 were not needed. Also, there were rows where the value in each column was the same, so i got rid of those rows. For example, classifying and separating disorders, like "Mood Disorder" or "Substanace Abuse".
+clean_table_mental <- table_mental[-c(1:2,28), ]
+clean_table_mental <- clean_table_mental %>%
+  filter(!grepl("^Mood", disorder) & !grepl("^Post", disorder) & !grepl("^Attention", disorder) & !grepl("^Substance", disorder))
+clean_table_mental <- clean_table_mental %>%
+  filter(!grepl("Sleep disorder", disorder, ignore.case = TRUE))
+
+#Similar to the Physical table there are classifications of other and multiple classifications for the meditation category. we do the same procedure here.
+clean_table_mental$kind_of_meditation_category <- gsub(".*\\((.*?)\\).*", "\\1", clean_table_mental$kind_of_meditation_category)
+clean_table_mental$kind_of_meditation_category <- gsub(".*other.*", "other", clean_table_mental$kind_of_meditation_category)
+clean_table_mental$kind_of_meditation_category <- gsub("\\s*\\+.*", "", clean_table_mental$kind_of_meditation_category)
+
+#Trim
+clean_table_mental$kind_of_meditation_category <- trimws(clean_table_mental$kind_of_meditation_category)
+
+#taking the numbers and brackets from the disorder column
+clean_table_mental$disorder <- gsub("\\s*\\[\\d+\\]", "", clean_table_mental$disorder)
+
+#Removing parenthensis from the n of participants column
+clean_table_mental$n_of_participants <- gsub("\\s*\\(.*\\)", "", clean_table_mental$n_of_participants)
+#converting to numeric
+clean_table_mental$n_of_participants <- as.numeric(clean_table_mental$n_of_participants)
+clean_table_mental$period_weeks <- as.numeric(clean_table_mental$period_weeks)
+
+# Combine the cleaned mental and physical tables. We also drop insignificant clinical findings, as we're mostly focused on the significant results from the study.
+combined_table <- bind_rows(clean_table_mental, clean_table_physical) %>%
+  select(-unsignificant_clinical_finding_2)
+
+write.csv(combined_table, "combined_table.csv", row.names = FALSE)
+
+
+```
+
+
+```{r source 1 table, echo=FALSE}
+combined_table
+```
+
+```{r Source 2 clean, include=FALSE}
+#Scraping and cleaning the data from the second source
+# Define the URL
+url2 <- "https://www.cdc.gov/pcd/issues/2017/16_0034.htm"
+
+# Read the HTML content of the webpage
+page2 <- url2 %>%
+  read_html()
+
+# Scrape Table 2 (Prevalence of 12-Month Engagement in Mindfulness-Based Practices Among Adults)
+table_mindfulness <- page2 %>%
+  html_nodes("table") %>%
+  .[[2]] %>%
+  html_table(fill = TRUE)
+
+
+#Cleaning
+#The data was organized in terms of type of practice i.e. Yoga, Mediation, Tai-Chi, etc. This is good, but it interferes with the numeric data types and creates unnecessary rows in the data.
+# Rows 3 to 8, append "Yoga" to the end of the entries
+rows_to_append_yoga <- 3:8
+
+# Rows 10 to 15, append "Meditation"
+rows_to_append_meditation <- 10:15
+
+# Rows 17 to 22, append "Tai-Chi"
+rows_to_append_taichi <- 17:22
+
+# Rows 24 to 29, append "Qigong"
+rows_to_append_qigong <- 24:29
+
+# Rows 31 to 36, append "Any"
+rows_to_append_any <- 31:36
+
+# Append "Yoga" to the end of the entries in rows 3 to 8
+cleaned_table_mindfulness <- table_mindfulness %>%
+  mutate(`Practice/Occupation Status` = ifelse(row_number() %in% rows_to_append_yoga, paste0(`Practice/Occupation Status`, " Yoga"), `Practice/Occupation Status`))
+
+# Append "Meditation" to the end of the entries in rows 10 to 15
+cleaned_table_mindfulness <- cleaned_table_mindfulness %>%
+  mutate(`Practice/Occupation Status` = ifelse(row_number() %in% rows_to_append_meditation, paste0(`Practice/Occupation Status`, " Meditation"), `Practice/Occupation Status`))
+
+# Append "Tai-Chi" to the end of the entries in rows 17 to 22
+cleaned_table_mindfulness <- cleaned_table_mindfulness %>%
+  mutate(`Practice/Occupation Status` = ifelse(row_number() %in% rows_to_append_taichi, paste0(`Practice/Occupation Status`, " Tai-Chi"), `Practice/Occupation Status`))
+
+# Append "Qigong" to the end of the entries in rows 24 to 29
+cleaned_table_mindfulness <- cleaned_table_mindfulness %>%
+  mutate(`Practice/Occupation Status` = ifelse(row_number() %in% rows_to_append_qigong, paste0(`Practice/Occupation Status`, " Qigong"), `Practice/Occupation Status`))
+
+# Append "Any" to the end of the entries in rows 31 to 36
+cleaned_table_mindfulness <- cleaned_table_mindfulness %>%
+  mutate(`Practice/Occupation Status` = ifelse(row_number() %in% rows_to_append_any, paste0(`Practice/Occupation Status`, " Any"), `Practice/Occupation Status`))
+
+cleaned_table_mindfulness <- cleaned_table_mindfulness[-c(1:2,9,16,23,30), ]
+
+# removing parenthensis. There are parenthensis in the entries of 2002, 2007, and 2012a, which is messing the data type. We remove the parenthensis and change the datatype
+
+cleaned_table_mindfulness <- cleaned_table_mindfulness %>%
+  mutate(`2002` = as.numeric(gsub("\\(.*\\)", "", `2002`)),
+         `2007` = as.numeric(gsub("\\(.*\\)", "", `2007`)),
+         `2012a` = as.numeric(gsub("\\(.*\\)", "", `2012a`)))
+
+write.csv(cleaned_table_mindfulness, "cleaned_table_mindfulness.csv", row.names = FALSE)
+```
+
+```{r source 2 table,echo=FALSE}
+cleaned_table_mindfulness
+```
+## Meditation Types 
+We can use our data to find which meditation types were the most popular in the study. From our first source we may examine which mediation types were used most frequently in the studies:
+
+```{r pie chart,echo=FALSE}
+# Calculate the total number of participants for each type of meditation
+total_participants <- combined_table %>%
+  group_by(kind_of_meditation_category) %>%
+  summarise(total_participants = sum(n_of_participants))
+
+# Plot the popularity of each type of meditation as a pie chart
+ggplot(total_participants, aes(x = "", y = total_participants, fill = kind_of_meditation_category)) +
+  geom_bar(stat = "identity", width = 1) +  # Create a pie chart
+  coord_polar(theta = "y") +  # Convert the bar plot to a pie chart
+  labs(x = NULL, y = NULL, fill = "Meditation Category") +
+  theme_void() +  # Remove axes and background
+  ggtitle("Usage of Each Meditation Method")
+
+```
+Clearly Mindfulness Meditation was used the most here. 
+
+## Sentiment Analysis
+Because the data I obtained from the first source on meditation outcomes was given in words (significant_clinical_finding_1), I wanted to perform a sentiment analysis on them to see which meditative technique produced the most positive outcomes. The notation in the study indicates that the intervention had a statistically significant impact on the given mood or experience. For example in the first row, the intervention had a statistically significant impact on depressive mood, feeling anxious, and global impression. That being said, I expect most of the sentiment analysis to be negatively skewed, because the intervention would counteract various negative moods. Thus,the method with most negative sentiment will actually be the best/ most effective.
+
+```{r, include=FALSE}
+# Define a function for sentiment analysis
+meditation_sentiment_analysis_combined <- function(data, lexicon = "bing") {
+  # Select relevant columns
+  data <- data %>%
+    select(kind_of_meditation_category, significant_clinical_finding_1)
+  
+  # Perform sentiment analysis
+  sentiment_analysis <- data %>%
+    unnest_tokens(word, significant_clinical_finding_1) %>%
+    inner_join(get_sentiments(lexicon)) %>%
+    group_by(kind_of_meditation_category, sentiment) %>%
+    summarise(count = n()) %>%
+    pivot_wider(names_from = sentiment, values_from = count, values_fill = 0) %>%
+    mutate(sentiment_score = positive - negative)
+  
+  return(sentiment_analysis)
+}
+
+# Perform sentiment analysis using the "bing" lexicon on the combined table
+combined_table_sentiment <- meditation_sentiment_analysis_combined(combined_table, lexicon = "bing")
+
+```
+
+```{r sentiment analysis, echo=FALSE}
+combined_table_sentiment
+```
+From our sentiment analysis we can see that Mindfulness Meditation has had the greatest impact overall. A potential problem with this could be that Mindfulness might've ultimately had the most impact because it was used the most frequently in the study. Let's visualize the sentiment analysis this:
+
+```{r sentiment visualization, echo=FALSE}
+# Plot the sentiment analysis for the combined table
+ggplot(combined_table_sentiment, aes(x = reorder(kind_of_meditation_category, -sentiment_score), y = sentiment_score, fill = kind_of_meditation_category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Meditation Category", y = "Sentiment Score", title = "Combined Table Sentiment Analysis by Meditation Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+
+```
+
+
+## Wordcloud
+Honestly I saw a wordcloud analysis in one of the example projects and though it would be perfect for my project as well. The point of the wordcloud analysis would be to see for which word or phrase the meditation methods had the most positive impact over. This proved to be a challenge to me for a few reasons. For one, I hadn't really used wordcloud much in the past. Secondly, while cleaning my data there were a few difficulties in the significant_clinical_finding_1 columns. Particularly there were "A"s attached to many of the words that I couldn't find a reasonable way of taking out. Those "A"s indicated a priority outcome of the RCT. Thus when I originally did the wordcloud, predictably "A" emerged as the most prominent word. Also, other words such as "mood"and "feeling" emerged as popular words, but they didn't really indicate much. These are accessory words that accompany other words. For example "depressive mood" or "feeling anxious". I had to remove a few words in order for the wordcloud to make sense.
+
+
+```{r wordcloud, echo=FALSE,warning=FALSE}
+# Concatenate all text in the "significant_clinical_finding_1" column
+text <- paste(combined_table$significant_clinical_finding_1, collapse = " ")
+
+# Define words to exclude
+exclude_words <- c("symptoms", "mood", "feeling")
+
+# Remove excluded words
+text <- gsub(paste(exclude_words, collapse = "|"), "", text)
+
+# Create the word cloud
+wordcloud(words = strsplit(text, "\\s+")[[1]][strsplit(text, "\\s+")[[1]] != "a"], min.freq = 1, random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+```
+
+
+
+According to the wordcloud, the meditative techniques had lots of effect on depression, sleep, anxiousness, stress, fatigue, and quality of life. 
+
+
+## Prevalence of Meditation/Yoga in the Workforce
+
+I was also quite interested to see how frequently meditation is used across the workforce. Seeing as it is thought to help counteract stress, I was intrigued to see how many people actually implement it in practice. I used our second data source to complete this one. I specifically wanted to plot meditation vs yoga, as those two seemed to be the most popular. I had to reshape the data using pivot_longer, and i added a little line between the different types of workers just to emphasize the disparities in usage between different worker types.  
+
+```{r yoga vs meditation, warning=FALSE, echo=FALSE}
+
+# Filter the data for rows containing "Meditation"
+meditation_data <- cleaned_table_mindfulness %>%
+  filter(grepl("Meditation", `Practice/Occupation Status`))
+
+# Reshape the data to long format
+long_data_meditation <- tidyr::pivot_longer(meditation_data, cols = starts_with("20"), names_to = "Year", values_to = "Prevalence")
+
+# Plot the meditation data with lines for each year
+plot_meditation <- ggplot(long_data_meditation, aes(x = `Practice/Occupation Status`, y = Prevalence, color = Year, group = Year)) +
+  geom_point() +
+  geom_line() +  # Add lines
+  labs(x = "Worker Type", y = "Prevalence", color = "Year", title = "Prevalence of Meditation by Worker Type Over Time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Filter the data for rows containing "Yoga"
+yoga_data <- cleaned_table_mindfulness %>%
+  filter(grepl("Yoga", `Practice/Occupation Status`))
+
+# Reshape the data to long format
+long_data_yoga <- tidyr::pivot_longer(yoga_data, cols = starts_with("20"), names_to = "Year", values_to = "Prevalence")
+
+# Plot the yoga data with lines for each year
+plot_yoga <- ggplot(long_data_yoga, aes(x = `Practice/Occupation Status`, y = Prevalence, color = Year, group = Year)) +
+  geom_point() +
+  geom_line() +  # Add lines
+  labs(x = "Worker Type", y = "Prevalence", color = "Year", title = "Prevalence of Yoga by Worker Type Over Time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot the meditation and yoga data side by side
+plot(plot_meditation)
+plot(plot_yoga)
+
+```
+
+As shown by the plot, the prevalence of yoga overtime has increased, whereas the frequency of meditation has dropped. This is quite interesting, as our sentiment analysis shows us that meditation is actually a bit more effective at eliciting positive feelings. I suppose this is the case because Yoga is probably a bigger industry, that doubles as mental and physical exercise. Meditation is largely thought of as a mental activity.
+
+Overall, meditation appears to be a pretty worthwhile activity, with many people engaging and reporting positive outcomes :)
